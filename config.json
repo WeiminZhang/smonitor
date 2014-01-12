@@ -1,0 +1,16 @@
+{
+    "interval": "500000",
+    "jobs": [
+        {
+            "name": "touch",
+            "cmd": ["touch", "test.txt"],
+            "once": true
+        },
+        {
+            "name": "browser",
+            "cmd": ["/usr/bin/chromium-browser"],
+            "delay_track": 5,
+            "track_children": true
+        }
+    ]
+}

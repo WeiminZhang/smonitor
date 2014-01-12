@@ -1,26 +1,26 @@
-#include "jobs.h"
-
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
 #include <json.h>
 
-static job_t s_jobs[MAX_JOBS_NUM];
+#include "smonitor.h"
+#include "config.h"
 
-static int read_text_file(char const *filename, char* buffer, size_t len_max)
+int read_text_file(char const *filename, char* buffer, size_t length)
 {
     int retcode = 0;
     size_t elements_read = 0;
     FILE* fh = NULL;
 
-    memset(buffer, 0, len_max);
+    memset(buffer, 0, length);
     
     fh = fopen(filename, "r");
     if ( fh == NULL ) {
         return -1;
     }
 
-    elements_read = fread(buffer, 1, len_max, fh);
+    elements_read = fread(buffer, 1, length-1, fh);
     if ( elements_read == 0 ) {
         retcode = -1;
     }
@@ -35,13 +35,12 @@ static int read_text_file(char const *filename, char* buffer, size_t len_max)
 }
 
 
-int complete_config_from_json(config_t *config, JsonNode *node) {
+int complete_job_config_from_json(config_t *config, JsonNode *node) {
     JsonNode *field = NULL;
     JsonNode *c;
     int i;
 
     memset((uint8_t*)config, 0, sizeof(config_t));
-
 
     field = json_find_member(node, "name");
     if (field == NULL || field->tag != JSON_STRING) {
@@ -53,6 +52,7 @@ int complete_config_from_json(config_t *config, JsonNode *node) {
     if (field == NULL || field->tag != JSON_ARRAY) {
         return -1;
     }
+
     i = 0;
     json_foreach(c, field) {
         if (i >= MAX_COMMAND_ARGUMENTS) {
@@ -67,51 +67,56 @@ int complete_config_from_json(config_t *config, JsonNode *node) {
     config->cmd_len = i;
 
     field = json_find_member(node, "workdir");
-    if (field != NULL) {
+    if (field != NULL && field->tag == JSON_STRING) {
         strncpy(config->workdir, field->string_, MAX_FIELD_LEN);
     }
-    
+
     field = json_find_member(node, "out_file");
-    if (field != NULL) {
+    if (field != NULL && field->tag == JSON_STRING) {
         strncpy(config->out_file, field->string_, MAX_FIELD_LEN);
     }
 
     field = json_find_member(node, "in_file");
-    if (field != NULL) {
+    if (field != NULL && field->tag == JSON_STRING) {
         strncpy(config->in_file, field->string_, MAX_FIELD_LEN);
     }
     
     field = json_find_member(node, "user");
-    if (field != NULL) {
+    if (field != NULL && field->tag == JSON_STRING) {
         strncpy(config->user, field->string_, MAX_FIELD_LEN);
     }
 
+    field = json_find_member(node, "priority");
+    if (field != NULL && field->tag == JSON_NUMBER) {
+        config->priority = (uint32_t) field->number_;     
+    }
+
     field = json_find_member(node, "delay_start");
-    if (field != NULL) {
-        config->delay_start = field->number_;     
+    if (field != NULL && field->tag == JSON_NUMBER) {
+        config->delay_start = (uint8_t) field->number_;     
     }
 
     field = json_find_member(node, "delay_track");
-    if (field != NULL) {
-        config->delay_track = field->number_;     
-    }
-
-    field = json_find_member(node, "track_children");
-    if (field != NULL) {
-        config->track_children = field->number_;     
+    if (field != NULL && field->tag == JSON_NUMBER) {
+        config->delay_track = (uint8_t) field->number_;     
     }
 
     field = json_find_member(node, "once");
-    if (field != NULL) {
-        config->once = field->number_;     
+    if (field != NULL && field->tag == JSON_BOOL) {
+        config->once = field->bool_;
     }
-        
+
+    field = json_find_member(node, "track_children");
+    if (field != NULL && field->tag == JSON_BOOL) {
+        config->track_children = field->bool_;
+    }
+
+
     return 0;
 }
 
 
-int get_jobs_json(job_t **jobs, size_t *count, char const *filename) {
-
+int parse_config(char const *filename, smonitor_t* monitor) {
     int  retcode;
     int  i;
     char buf[BUFFER_SIZE] = {};
@@ -120,7 +125,7 @@ int get_jobs_json(job_t **jobs, size_t *count, char const *filename) {
     JsonNode *iter_elem;
 
 
-    if ( (jobs == NULL) || (count == NULL) ) {
+    if ( monitor == NULL ) {
         return -1;
     }
 
@@ -133,10 +138,17 @@ int get_jobs_json(job_t **jobs, size_t *count, char const *filename) {
     if (root_elem == NULL) {
         return -1;
     }
-    
+
     jobs_elem = json_find_member(root_elem, "jobs");
     if (jobs_elem == NULL) {
         return -1;
+    }
+
+    iter_elem = json_find_member(root_elem, "interval");
+    if (iter_elem == NULL || iter_elem->tag != JSON_NUMBER) {
+        monitor->interval = (uint64_t) DEFAULT_INTERVAL;
+    } else {
+        monitor->interval = (uint64_t) iter_elem->number_;
     }
 
     i = 0;
@@ -145,19 +157,17 @@ int get_jobs_json(job_t **jobs, size_t *count, char const *filename) {
             break;
         }
 
-        retcode = complete_config_from_json(&s_jobs[i].config, iter_elem);
+        retcode = complete_job_config_from_json(&(monitor->jobs[i].config), iter_elem);
         if (retcode == -1) {
-            printf("test\n");
-            continue; // skip wrong node
+            fprintf(stderr, "Wrong job description on %d position, skipping\n", i);
+            continue;
         }
 
         i += 1;
     }
-    
-    *jobs  = &s_jobs[0];
-    *count = i;
+    monitor->jobs_num = i;
 
     json_delete(root_elem);
-    
+
     return 0;
 }

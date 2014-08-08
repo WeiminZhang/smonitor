@@ -1,6 +1,7 @@
 SRC = src/$(TARGET).c \
       src/jobs.c \
       src/config.c \
+      src/proc.c \
       deps/json.c
 OBJ = $(SRC:.c=.o)
 
